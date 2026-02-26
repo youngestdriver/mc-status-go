@@ -1,15 +1,20 @@
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# Keep only source and docker-related files for newly added files.
+# Everything else is ignored by default.
+*
 
-# Test binary, built with `go test -c`
-*.test
+# Allow directories so nested include rules can match.
+!*/
 
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
+# Source code and Go module metadata
+!**/*.go
+!go.mod
+!go.sum
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Docker packaging files
+!Dockerfile
+!.dockerignore
+!docker-compose.yml
+!docker-compose.yaml
+
+# Repository control files
+!.gitignore

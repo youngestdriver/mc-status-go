@@ -17,6 +17,71 @@ https://pkg.go.dev/github.com/mcstatus-io/mcutil/v4
 
 ## Usage
 
+### HTTP API
+
+You can run an HTTP API server that wraps `status.Modern` and `status.Bedrock`.
+
+```bash
+go run ./cmd/api -listen :8080 -timeout 5s
+```
+
+Run with Docker:
+
+```bash
+docker build -t mc-status-go:latest .
+docker run --rm -p 8080:8080 mc-status-go:latest
+```
+
+Run with Docker Compose:
+
+```bash
+docker compose up -d --build
+```
+
+Request format:
+
+```text
+GET /{server_type}/{server_ip}:{server_port}
+```
+
+Supported `server_type` values:
+- `java`
+- `bedrock`
+
+Examples:
+
+```bash
+curl http://127.0.0.1:8080/java/play.example.com:25565
+curl http://127.0.0.1:8080/bedrock/bedrock.example.com:19132
+```
+
+Response JSON shape:
+
+```json
+{
+  "online": true,
+  "hostname": "play.example.com:25565",
+  "version": {
+    "name": "1.20.1",
+    "protocol": 763
+  },
+  "players": {
+    "online": 2,
+    "max": 20,
+    "list": [
+      {
+        "name": "Player1",
+        "name_clean": "Player1"
+      }
+    ]
+  },
+  "motd": {
+    "clean": "Welcome to the server",
+    "raw": "§aWelcome to the server"
+  }
+}
+```
+
 ### Status (1.7+)
 
 Retrieves the status of the Java Edition Minecraft server. This method only works on netty servers, which is version 1.7 and above. An attempt to use on pre-netty servers will result in an error.

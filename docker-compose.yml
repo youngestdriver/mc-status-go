@@ -1,0 +1,11 @@
+services:
+  mc-status-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mc-status-go:latest
+    container_name: mc-status-go
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    command: ["-listen", ":8080", "-timeout", "5s"]
