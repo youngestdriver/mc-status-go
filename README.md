@@ -38,6 +38,9 @@ Run with Docker Compose:
 docker compose up -d --build
 ```
 
+`icon` is disabled by default. Set `icon=true` to include the `icon` field in the JSON response.
+The provided `docker-compose.yml` enables this by setting `icon=true`.
+
 Request format:
 
 ```text
@@ -60,9 +63,17 @@ Response JSON shape:
 ```json
 {
   "online": true,
-  "hostname": "play.example.com:25565",
+  "host": "play.example.com",
+  "port": 25565,
+  "ip_address": "play.example.com",
+  "eula_blocked": false,
+  "retrieved_at": 1772785808566,
+  "expires_at": 1772785868566,
+  "srv_record": null,
   "version": {
-    "name": "1.20.1",
+    "name_raw": "1.20.1",
+    "name_clean": "1.20.1",
+    "name_html": "<span><span>1.20.1</span></span>",
     "protocol": 763
   },
   "players": {
@@ -70,15 +81,21 @@ Response JSON shape:
     "max": 20,
     "list": [
       {
-        "name": "Player1",
-        "name_clean": "Player1"
+        "uuid": "00000000-0000-0000-0000-000000000000",
+        "name_raw": "Player1",
+        "name_clean": "Player1",
+        "name_html": "<span><span>Player1</span></span>"
       }
     ]
   },
   "motd": {
+    "raw": "Welcome to the server",
     "clean": "Welcome to the server",
-    "raw": "§aWelcome to the server"
-  }
+    "html": "<span><span>Welcome to the server</span></span>"
+  },
+  "mods": [],
+  "software": null,
+  "plugins": []
 }
 ```
 

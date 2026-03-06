@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -20,18 +21,32 @@ import (
 	"github.com/mcstatus-io/mcutil/v4/util"
 )
 
+const responseTTL = time.Minute
+
 type apiStatusResponse struct {
-	Online   bool       `json:"online"`
-	Hostname string     `json:"hostname"`
-	Version  apiVersion `json:"version"`
-	Players  apiPlayers `json:"players"`
-	MOTD     apiMOTD    `json:"motd"`
-	Error    string     `json:"error,omitempty"`
+	Online      bool                `json:"online"`
+	Host        string              `json:"host"`
+	Port        uint16              `json:"port"`
+	IPAddress   string              `json:"ip_address"`
+	EULABlocked bool                `json:"eula_blocked"`
+	RetrievedAt int64               `json:"retrieved_at"`
+	ExpiresAt   int64               `json:"expires_at"`
+	SRVRecord   *response.SRVRecord `json:"srv_record"`
+	Version     apiVersion          `json:"version"`
+	Players     apiPlayers          `json:"players"`
+	MOTD        apiMOTD             `json:"motd"`
+	Icon        *string             `json:"icon,omitempty"`
+	Mods        []apiMod            `json:"mods"`
+	Software    any                 `json:"software"`
+	Plugins     []apiPlugin         `json:"plugins"`
+	Error       string              `json:"error,omitempty"`
 }
 
 type apiVersion struct {
-	Name     string `json:"name"`
-	Protocol int64  `json:"protocol"`
+	NameRaw   string `json:"name_raw"`
+	NameClean string `json:"name_clean"`
+	NameHTML  string `json:"name_html"`
+	Protocol  int64  `json:"protocol"`
 }
 
 type apiPlayers struct {
@@ -41,13 +56,26 @@ type apiPlayers struct {
 }
 
 type apiPlayer struct {
-	Name      string `json:"name"`
+	UUID      string `json:"uuid"`
+	NameRaw   string `json:"name_raw"`
 	NameClean string `json:"name_clean"`
+	NameHTML  string `json:"name_html"`
 }
 
 type apiMOTD struct {
-	Clean string `json:"clean"`
 	Raw   string `json:"raw"`
+	Clean string `json:"clean"`
+	HTML  string `json:"html"`
+}
+
+type apiMod struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+}
+
+type apiPlugin struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 type javaStatusFetcher func(context.Context, string, uint16, time.Duration) (*response.StatusModern, error)
@@ -76,7 +104,8 @@ func realFetchBedrockStatus(ctx context.Context, host string, port uint16, timeo
 }
 
 type apiHandler struct {
-	timeout time.Duration
+	timeout     time.Duration
+	includeIcon bool
 }
 
 func main() {
@@ -89,13 +118,19 @@ func main() {
 		log.Fatal("timeout must be > 0")
 	}
 
+	includeIcon := parseBoolEnv("icon")
+
 	server := &http.Server{
 		Addr:              *listen,
-		Handler:           &apiHandler{timeout: *timeout},
+		Handler:           &apiHandler{timeout: *timeout, includeIcon: includeIcon},
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("mc-status api listening on %s (GET /{server_type}/{server_ip}:{server_port})", *listen)
+	log.Printf(
+		"mc-status api listening on %s (GET /{server_type}/{server_ip}:{server_port}), include_icon=%t",
+		*listen,
+		includeIcon,
+	)
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
@@ -105,32 +140,25 @@ func main() {
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
-		writeJSON(w, http.StatusMethodNotAllowed, apiStatusResponse{
-			Error: "only GET is supported",
-		})
+		writeJSON(w, http.StatusMethodNotAllowed, errorResponse("only GET is supported"))
 
 		return
 	}
 
 	serverType, address, ok := parseRequestPath(r.URL.Path)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, apiStatusResponse{
-			Error: "route must be /{server_type}/{server_ip}:{server_port}",
-		})
+		writeJSON(w, http.StatusNotFound, errorResponse("route must be /{server_type}/{server_ip}:{server_port}"))
 
 		return
 	}
 
 	host, port, err := parseTarget(serverType, address)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, apiStatusResponse{
-			Error: err.Error(),
-		})
+		writeJSON(w, http.StatusBadRequest, errorResponse(err.Error()))
 
 		return
 	}
 
-	hostname := fmt.Sprintf("%s:%d", host, port)
 	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
 	defer cancel()
 
@@ -138,25 +166,23 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "java":
 		javaStatus, err := fetchJavaStatus(ctx, host, port, h.timeout)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, offlineResponse(hostname, err))
+			writeJSON(w, http.StatusBadGateway, offlineResponse(host, port, err))
 
 			return
 		}
 
-		writeJSON(w, http.StatusOK, mapJavaResponse(hostname, javaStatus))
+		writeJSON(w, http.StatusOK, mapJavaResponse(host, port, javaStatus, h.includeIcon))
 	case "bedrock":
 		bedrockStatus, err := fetchBedrockStatus(ctx, host, port, h.timeout)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, offlineResponse(hostname, err))
+			writeJSON(w, http.StatusBadGateway, offlineResponse(host, port, err))
 
 			return
 		}
 
-		writeJSON(w, http.StatusOK, mapBedrockResponse(hostname, bedrockStatus))
+		writeJSON(w, http.StatusOK, mapBedrockResponse(host, port, bedrockStatus))
 	default:
-		writeJSON(w, http.StatusBadRequest, apiStatusResponse{
-			Error: "server_type must be one of: java, bedrock",
-		})
+		writeJSON(w, http.StatusBadRequest, errorResponse("server_type must be one of: java, bedrock"))
 	}
 }
 
@@ -222,62 +248,76 @@ func defaultPortForType(serverType string) (uint16, error) {
 	}
 }
 
-func mapJavaResponse(hostname string, result *response.StatusModern) apiStatusResponse {
+func mapJavaResponse(host string, port uint16, result *response.StatusModern, includeIcon bool) apiStatusResponse {
 	playerList := make([]apiPlayer, 0, len(result.Players.Sample))
 	for _, v := range result.Players.Sample {
 		playerList = append(playerList, apiPlayer{
-			Name:      v.Name.Raw,
+			UUID:      v.ID,
+			NameRaw:   v.Name.Raw,
 			NameClean: v.Name.Clean,
+			NameHTML:  v.Name.HTML,
 		})
 	}
 
-	return apiStatusResponse{
-		Online:   true,
-		Hostname: hostname,
-		Version: apiVersion{
-			Name:     result.Version.Name.Clean,
-			Protocol: result.Version.Protocol,
-		},
-		Players: apiPlayers{
-			Online: valueOrZero(result.Players.Online),
-			Max:    valueOrZero(result.Players.Max),
-			List:   playerList,
-		},
-		MOTD: apiMOTD{
-			Clean: result.MOTD.Clean,
-			Raw:   result.MOTD.Raw,
-		},
+	response := newBaseResponse(host, port)
+	response.Online = true
+	response.SRVRecord = result.SRVRecord
+	response.Version = apiVersion{
+		NameRaw:   result.Version.Name.Raw,
+		NameClean: result.Version.Name.Clean,
+		NameHTML:  result.Version.Name.HTML,
+		Protocol:  result.Version.Protocol,
 	}
+	response.Players = apiPlayers{
+		Online: valueOrZero(result.Players.Online),
+		Max:    valueOrZero(result.Players.Max),
+		List:   playerList,
+	}
+	response.MOTD = mapMOTD(&result.MOTD)
+	response.Mods = mapMods(result.Mods)
+
+	if includeIcon {
+		response.Icon = result.Favicon
+	}
+
+	return response
 }
 
-func mapBedrockResponse(hostname string, result *response.StatusBedrock) apiStatusResponse {
-	return apiStatusResponse{
-		Online:   true,
-		Hostname: hostname,
-		Version: apiVersion{
-			Name:     stringValueOrEmpty(result.Version),
-			Protocol: valueOrZero(result.ProtocolVersion),
-		},
-		Players: apiPlayers{
-			Online: valueOrZero(result.OnlinePlayers),
-			Max:    valueOrZero(result.MaxPlayers),
-			List:   make([]apiPlayer, 0),
-		},
-		MOTD: mapMOTD(result.MOTD),
+func mapBedrockResponse(host string, port uint16, result *response.StatusBedrock) apiStatusResponse {
+	versionInfo := parseFormattingString(stringValueOrEmpty(result.Version))
+
+	response := newBaseResponse(host, port)
+	response.Online = true
+	response.Version = apiVersion{
+		NameRaw:   versionInfo.Raw,
+		NameClean: versionInfo.Clean,
+		NameHTML:  versionInfo.HTML,
+		Protocol:  valueOrZero(result.ProtocolVersion),
 	}
+	response.Players = apiPlayers{
+		Online: valueOrZero(result.OnlinePlayers),
+		Max:    valueOrZero(result.MaxPlayers),
+		List:   make([]apiPlayer, 0),
+	}
+
+	response.MOTD = mapMOTD(result.MOTD)
+
+	return response
 }
 
-func offlineResponse(hostname string, err error) apiStatusResponse {
-	return apiStatusResponse{
-		Online:   false,
-		Hostname: hostname,
-		Version:  apiVersion{},
-		Players: apiPlayers{
-			List: make([]apiPlayer, 0),
-		},
-		MOTD:  apiMOTD{},
-		Error: err.Error(),
-	}
+func offlineResponse(host string, port uint16, err error) apiStatusResponse {
+	response := newBaseResponse(host, port)
+	response.Online = false
+	response.Error = err.Error()
+
+	return response
+}
+
+func errorResponse(message string) apiStatusResponse {
+	response := newBaseResponse("", 0)
+	response.Error = message
+
+	return response
 }
 
 func mapMOTD(result *formatting.Result) apiMOTD {
@@ -286,8 +326,9 @@ func mapMOTD(result *formatting.Result) apiMOTD {
 	}
 
 	return apiMOTD{
-		Clean: result.Clean,
 		Raw:   result.Raw,
+		Clean: result.Clean,
+		HTML:  result.HTML,
 	}
 }
 
@@ -305,6 +346,72 @@ func stringValueOrEmpty(v *string) string {
 	}
 
 	return *v
+}
+
+func parseFormattingString(raw string) formatting.Result {
+	if len(raw) == 0 {
+		return formatting.Result{}
+	}
+
+	parsed, err := formatting.Parse(raw)
+	if err != nil || parsed == nil {
+		return formatting.Result{
+			Raw:   raw,
+			Clean: raw,
+			HTML:  raw,
+		}
+	}
+
+	return *parsed
+}
+
+func mapMods(modInfo *response.ModInfo) []apiMod {
+	if modInfo == nil || len(modInfo.List) == 0 {
+		return make([]apiMod, 0)
+	}
+
+	mods := make([]apiMod, 0, len(modInfo.List))
+
+	for _, mod := range modInfo.List {
+		mods = append(mods, apiMod{
+			ID:      mod.ID,
+			Version: mod.Version,
+		})
+	}
+
+	return mods
+}
+
+func parseBoolEnv(key string) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func newBaseResponse(host string, port uint16) apiStatusResponse {
+	retrievedAt := time.Now().UnixMilli()
+
+	return apiStatusResponse{
+		Host:        host,
+		Port:        port,
+		IPAddress:   host,
+		EULABlocked: false,
+		RetrievedAt: retrievedAt,
+		ExpiresAt:   retrievedAt + responseTTL.Milliseconds(),
+		Version:     apiVersion{},
+		Players: apiPlayers{
+			List: make([]apiPlayer, 0),
+		},
+		MOTD:     apiMOTD{},
+		Mods:     make([]apiMod, 0),
+		Software: nil,
+		Plugins:  make([]apiPlugin, 0),
+	}
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {

@@ -6,6 +6,8 @@ services:
     image: mc-status-go:latest
     container_name: mc-status-go
     restart: unless-stopped
+    environment:
+      - icon=false
     ports:
       - "8080:8080"
     command: ["-listen", ":8080", "-timeout", "5s"]
