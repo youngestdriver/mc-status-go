@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GOPROXY: "${GOPROXY:-https://goproxy.cn|https://goproxy.io|https://proxy.golang.org|direct}"
     image: mc-status-go:latest
     container_name: mc-status-go
     restart: unless-stopped

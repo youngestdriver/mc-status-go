@@ -32,10 +32,22 @@ docker build -t mc-status-go:latest .
 docker run --rm -p 8080:8080 mc-status-go:latest
 ```
 
+If module download times out in your network, set `GOPROXY` when building:
+
+```bash
+docker build --build-arg GOPROXY=https://goproxy.cn\|https://goproxy.io\|https://proxy.golang.org\|direct -t mc-status-go:latest .
+```
+
 Run with Docker Compose:
 
 ```bash
 docker compose up -d --build
+```
+
+To override proxy in Compose build:
+
+```bash
+GOPROXY=https://goproxy.cn\|https://goproxy.io\|https://proxy.golang.org\|direct docker compose up -d --build
 ```
 
 `icon` is disabled by default. Set `icon=true` to include the `icon` field in the JSON response.
